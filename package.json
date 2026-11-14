@@ -1,0 +1,26 @@
+{
+  "name": "learn-piano",
+  "desktopName": "learn-piano.desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Practice piano with sheet music and a MIDI keyboard, wait-mode style",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "setup:pdmx": "node scripts/setup-pdmx.mjs"
+  },
+  "dependencies": {
+    "@tonejs/midi": "2.0.28",
+    "opensheetmusicdisplay": "2.3.1",
+    "smplr": "1.2.0"
+  },
+  "devDependencies": {
+    "electron": "45.3.2",
+    "electron-vite": "6.0.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.8"
+  }
+}

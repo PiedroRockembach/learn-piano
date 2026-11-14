@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https: ws:; media-src 'self' blob: https:"
+    />
+    <title>Learn Piano</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header>
+      <form id="search-form">
+        <input id="search-input" type="search" placeholder="Buscar música…" autocomplete="off" />
+        <button type="submit">Buscar</button>
+        <button id="open-browser" type="button" title="Abrir a MidiShow no seu navegador; .mid baixados entram na biblioteca">Navegador</button>
+      </form>
+      <div class="controls">
+        <select id="hand-mode" title="Mão praticada">
+          <option value="both">Duas mãos</option>
+          <option value="rh">Mão direita</option>
+          <option value="lh">Mão esquerda</option>
+        </select>
+        <button id="restart" type="button" title="Reiniciar (R)">Reiniciar</button>
+        <label class="toggle"><input id="sound-toggle" type="checkbox" checked /> Som</label>
+        <span id="midi-status" class="pill">MIDI: procurando…</span>
+      </div>
+    </header>
+
+    <main>
+      <aside>
+        <nav>
+          <button type="button" data-tab="results" class="active">Resultados</button>
+          <button type="button" data-tab="library">Biblioteca</button>
+        </nav>
+        <ul id="song-list"></ul>
+        <div id="pager" hidden>
+          <button type="button" id="prev-page">‹</button>
+          <span id="page-label"></span>
+          <button type="button" id="next-page">›</button>
+        </div>
+      </aside>
+
+      <section id="stage">
+        <div id="stats"><span id="song-title">Nenhuma música</span><span id="stats-text"></span></div>
+        <div id="status"></div>
+        <div id="sheet-wrap"><div id="sheet"></div></div>
+      </section>
+    </main>
+
+    <div id="keyboard"></div>
+
+    <dialog id="track-dialog">
+      <form method="dialog">
+        <h2>Trilhas do MIDI</h2>
+        <p class="hint">Marque as trilhas de piano. Bateria e trilhas vazias ficam de fora.</p>
+        <ul id="track-list"></ul>
+        <label>
+          Separar mãos
+          <select id="split-mode">
+            <option value="auto">Automático</option>
+            <option value="tracks">Por trilha (aguda = direita)</option>
+            <option value="pitch">Pela altura (Dó central)</option>
+          </select>
+        </label>
+        <menu>
+          <button value="cancel" formnovalidate>Cancelar</button>
+          <button value="ok" class="primary">Abrir partitura</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
