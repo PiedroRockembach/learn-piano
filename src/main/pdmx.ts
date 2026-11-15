@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, normalize as normalizePath } from "node:path";
 import { pdmxDir } from "./paths";
-import { normalize, type Candidate } from "./search";
+import { normalize, type Candidate, type CandidateSource } from "../shared/search";
 
 // [title, artist, midPath, views, pianoOnly]
 type Row = [string, string, string, number, 0 | 1];
@@ -23,7 +23,9 @@ export function pdmxAvailable(): boolean {
   return load().length > 0;
 }
 
-export function pdmxCandidates(words: string[], required: number): Candidate[] {
+export const pdmxSource: CandidateSource = (_variant, words, required) => pdmxCandidates(words, required);
+
+function pdmxCandidates(words: string[], required: number): Candidate[] {
   const all = load();
   const out: Candidate[] = [];
   for (let i = 0; i < all.length; i++) {

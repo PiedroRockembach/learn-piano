@@ -217,8 +217,17 @@ export class Practice {
   }
 
   expectedPitches(): number[] {
+    return this.expectedNotes().map((a) => a.pitch);
+  }
+
+  expectedNotes(): { pitch: number; hand: Hand }[] {
     const step = this.steps[this.stepIndex];
-    return step && !this.stats.finished && !this.playing ? step.expected.map((a) => a.pitch) : [];
+    return step && !this.stats.finished && !this.playing ? step.expected.map(({ pitch, hand }) => ({ pitch, hand })) : [];
+  }
+
+  // Score position of the blue cursor, in converter units.
+  currentUnit(): number | null {
+    return this.cursorUnits[this.cursorIndex] ?? null;
   }
 
   togglePlay(): void {
