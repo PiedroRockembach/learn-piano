@@ -33,7 +33,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  const allowed = new Set(["midi", "midiSysex"]);
+  const allowed = new Set(["midi", "midiSysex", "media"]);
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(allowed.has(permission)));
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
 

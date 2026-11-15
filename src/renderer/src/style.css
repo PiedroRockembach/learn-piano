@@ -118,6 +118,21 @@ header {
   text-overflow: ellipsis;
 }
 
+.level {
+  width: 48px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.level i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #3ecf7a;
+}
+
 .pill.ok {
   color: #b8f0cd;
   background: #1c3a2a;

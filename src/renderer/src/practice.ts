@@ -40,6 +40,8 @@ export class Practice {
   private layout: ScoreLayout = "line";
   private readonly scroller: HTMLElement;
   private playing = false;
+  // Off in microphone mode: the speakers would be heard as the player's own notes.
+  autoPlayOtherHand = true;
   private playTimer: ReturnType<typeof setInterval> | undefined;
   private playVoices: { end: number; stop: () => void }[] = [];
 
@@ -210,6 +212,15 @@ export class Practice {
     this.enterStep(target);
   }
 
+  get isPlaying(): boolean {
+    return this.playing;
+  }
+
+  expectedPitches(): number[] {
+    const step = this.steps[this.stepIndex];
+    return step && !this.stats.finished && !this.playing ? step.expected.map((a) => a.pitch) : [];
+  }
+
   togglePlay(): void {
     if (this.playing) {
       this.stopPlayback(true);
@@ -313,7 +324,7 @@ export class Practice {
 
   // In single-hand mode, the other hand plays by itself between this step and the next one.
   private playOtherHand(step: Step): void {
-    if (this.mode === "both" || !this.score) return;
+    if (this.mode === "both" || !this.score || !this.autoPlayOtherHand) return;
     const other: Hand = this.mode === "rh" ? "lh" : "rh";
     const nextUnit = this.steps[this.stepIndex + 1]?.unit ?? Infinity;
     const secPerUnit = 60 / this.score.bpm / UNITS_PER_QUARTER;

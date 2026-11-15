@@ -3,6 +3,7 @@ import { parseSequenceId } from "../../shared/onlinesequencer";
 import type { LibraryEntry, SongRef } from "../../shared/types";
 import { PianoSound } from "./audio";
 import { VirtualKeyboard } from "./keyboard";
+import { MicInput } from "./mic-input";
 import { startComputerKeyboard, startMidiInput } from "./midi-input";
 import { Practice, type HandMode, type PracticeStats, type ScoreLayout } from "./practice";
 import { defaultTrackSelection, describeTracks, midiToScore, type SplitMode } from "./score/convert";
@@ -26,6 +27,13 @@ const noteLabel = (p: number) => `${NOTE_NAMES[p % 12]}${Math.floor(p / 12) - 1}
 let octave = 0;
 const held = new Map<number, number>();
 
+type InputMode = "midi" | "mic";
+let inputMode: InputMode = "midi";
+let midiNames: string[] = [];
+let micLabel = "";
+// Playback through the speakers keeps echoing for a moment after it stops.
+let micQuietUntil = 0;
+
 let tab: "results" | "library" = "results";
 let lastQuery = "";
 let page = 0;
@@ -47,6 +55,7 @@ function renderStats(s: PracticeStats): void {
 }
 
 function renderPlayState(playing: boolean): void {
+  if (!playing) micQuietUntil = performance.now() + 800;
   const button = $("play");
   button.textContent = playing ? "■ Parar" : "▶ Tocar";
   button.classList.toggle("primary", playing);
@@ -73,6 +82,64 @@ function onNoteOff(raw: number): void {
   sound.noteOff(pitch);
   keyboard.set(pitch, "pressed", false);
   keyboard.set(pitch, "correct", false);
+}
+
+// The microphone hears real pitches and the instrument makes its own sound: no octave shift, no echo.
+function onHeardNoteOn(pitch: number): void {
+  keyboard.set(pitch, "pressed", true);
+  practice.noteOn(pitch);
+}
+
+function onHeardNoteOff(pitch: number): void {
+  keyboard.set(pitch, "pressed", false);
+  keyboard.set(pitch, "correct", false);
+}
+
+const mic = new MicInput(
+  {
+    noteOn: onHeardNoteOn,
+    noteOff: onHeardNoteOff,
+    level: (v) => {
+      $("mic-level").firstElementChild!.setAttribute("style", `width:${Math.round(v * 100)}%`);
+    },
+  },
+  () => practice.expectedPitches(),
+  () => practice.isPlaying || performance.now() < micQuietUntil,
+);
+
+function renderInputStatus(): void {
+  const el = $("midi-status");
+  $("mic-level").hidden = inputMode !== "mic";
+  if (inputMode === "mic") {
+    el.textContent = mic.active ? `Mic: ${micLabel}` : "Mic: desligado";
+    el.classList.toggle("ok", mic.active);
+  } else {
+    el.textContent = midiNames.length ? `MIDI: ${midiNames.join(", ")}` : "MIDI: nenhum teclado";
+    el.classList.toggle("ok", midiNames.length > 0);
+  }
+}
+
+async function setInputMode(mode: InputMode): Promise<void> {
+  inputMode = mode;
+  $<HTMLSelectElement>("input-mode").value = mode;
+  practice.autoPlayOtherHand = mode === "midi";
+  try {
+    localStorage.setItem("inputMode", mode);
+  } catch {
+    // storage unavailable: the choice just isn't remembered
+  }
+  if (mode === "mic") {
+    try {
+      micLabel = await mic.start();
+    } catch (e) {
+      setStatus(`Microfone indisponível: ${(e as Error).message}`, true);
+      await setInputMode("midi");
+      return;
+    }
+  } else {
+    mic.stop();
+  }
+  renderInputStatus();
 }
 
 function renderList(items: (SongRef | LibraryEntry)[]): void {
@@ -345,15 +412,23 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "x" && !e.ctrlKey) setOctave(octave + 1);
 });
 
+$<HTMLSelectElement>("input-mode").addEventListener("change", (e) => {
+  void setInputMode((e.target as HTMLSelectElement).value as InputMode);
+});
+try {
+  if (localStorage.getItem("inputMode") === "mic") void setInputMode("mic");
+} catch {
+  // storage unavailable: start with MIDI
+}
+
 startComputerKeyboard({ noteOn: onNoteOn, noteOff: onNoteOff });
 startMidiInput({
-  noteOn: onNoteOn,
+  noteOn: (pitch, velocity) => inputMode === "midi" && onNoteOn(pitch, velocity),
   noteOff: onNoteOff,
   sustain: (down) => sound.sustain(down),
   devicesChanged: (names) => {
-    const el = $("midi-status");
-    el.textContent = names.length ? `MIDI: ${names.join(", ")}` : "MIDI: nenhum teclado";
-    el.classList.toggle("ok", names.length > 0);
+    midiNames = names;
+    renderInputStatus();
   },
 }).catch((e) => {
   $("midi-status").textContent = `MIDI indisponível: ${(e as Error).message}`;

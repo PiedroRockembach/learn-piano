@@ -36,6 +36,11 @@
         <button id="restart" type="button" title="Reiniciar (R)">Reiniciar</button>
         <label class="toggle"><input id="sound-toggle" type="checkbox" checked /> Som</label>
         <label class="toggle" title="Mostrar o teclado virtual embaixo da partitura"><input id="keyboard-toggle" type="checkbox" checked /> Teclado</label>
+        <select id="input-mode" title="De onde vêm as notas que você toca">
+          <option value="midi">Entrada: MIDI</option>
+          <option value="mic">Entrada: Microfone</option>
+        </select>
+        <span id="mic-level" class="level" title="Nível do microfone" hidden><i></i></span>
         <span id="midi-status" class="pill">MIDI: procurando…</span>
       </div>
     </header>
