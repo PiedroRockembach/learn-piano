@@ -39,6 +39,18 @@ export class VirtualKeyboard {
     this.keys.forEach((el, p) => el.classList.toggle("out", p < low || p > high));
   }
 
+  get whiteKeys(): number {
+    let n = 0;
+    this.keys.forEach((el) => el.classList.contains("white") && n++);
+    return n;
+  }
+
+  // Horizontal centre of a key as a fraction of the keyboard width.
+  centerOf(pitch: number): number | null {
+    const el = this.keys.get(pitch);
+    return el ? (parseFloat(el.style.left) + parseFloat(el.style.width) / 2) / 100 : null;
+  }
+
   set(pitch: number, mark: KeyMark, on: boolean): void {
     this.keys.get(pitch)?.classList.toggle(mark, on);
   }

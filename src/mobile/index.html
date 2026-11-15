@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>Learn Piano</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <section id="screen-library" class="screen">
+      <header class="appbar">
+        <h1>Minhas músicas</h1>
+      </header>
+      <ul id="library-list" class="list"></ul>
+      <div id="library-empty" class="empty" hidden>
+        <p class="empty-title">Nenhuma música ainda</p>
+        <p class="muted">Busque uma música, cole um link da Online Sequencer ou importe um arquivo .mid.</p>
+        <div class="row">
+          <button type="button" class="primary" data-add="search">Buscar</button>
+          <button type="button" data-add="file">Importar .mid</button>
+        </div>
+      </div>
+      <button id="fab-add" type="button" class="fab">＋ Adicionar</button>
+    </section>
+
+    <section id="screen-add" class="screen" hidden>
+      <header class="appbar">
+        <button type="button" class="icon back" aria-label="Voltar">←</button>
+        <h1>Adicionar música</h1>
+      </header>
+      <nav class="tabs" role="tablist">
+        <button type="button" data-tab="search" class="active">Buscar</button>
+        <button type="button" data-tab="os">Online Sequencer</button>
+        <button type="button" data-tab="file">Arquivo</button>
+      </nav>
+      <div class="tab-body" data-body="search">
+        <form id="search-form" class="row">
+          <input id="search-input" type="search" placeholder="Nome da música ou artista" enterkeyhint="search" autocomplete="off" />
+          <button type="submit" class="primary">Buscar</button>
+        </form>
+        <p id="search-state" class="state">Digite o nome e toque em Buscar. Não achou? Use a aba Online Sequencer.</p>
+        <ul id="search-results" class="list"></ul>
+      </div>
+      <div class="tab-body" data-body="os" hidden>
+        <ol class="steps">
+          <li>
+            <span>Procure a música no site</span>
+            <button id="os-open" type="button" class="primary">Abrir Online Sequencer</button>
+          </li>
+          <li><span>Abra a sequência e copie o link dela</span></li>
+          <li>
+            <span>Cole o link aqui</span>
+            <div class="row">
+              <input id="os-link" type="url" placeholder="onlinesequencer.net/1234567" inputmode="url" autocomplete="off" />
+              <button id="os-paste" type="button">Colar</button>
+              <button id="os-import" type="button" class="primary">Importar</button>
+            </div>
+            <p id="os-error" class="error" hidden></p>
+          </li>
+        </ol>
+      </div>
+      <div class="tab-body" data-body="file" hidden>
+        <div class="center">
+          <button id="file-pick" type="button" class="primary big">Escolher arquivo .mid</button>
+          <input id="file-input" type="file" accept=".mid,.midi,audio/midi,audio/x-midi,audio/mid" hidden />
+          <p id="file-state" class="state" hidden></p>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-tracks" class="screen" hidden>
+      <header class="appbar">
+        <button type="button" class="icon back" aria-label="Voltar">←</button>
+        <h1>Escolher trilhas</h1>
+      </header>
+      <div class="tracks">
+        <ul id="track-list" class="list checks"></ul>
+        <fieldset class="split">
+          <legend>Separar mãos</legend>
+          <label><input type="radio" name="split" value="auto" checked /> <span>Automático<small>Por trilha quando houver duas, senão pela altura</small></span></label>
+          <label><input type="radio" name="split" value="tracks" /> <span>Por trilha<small>A trilha mais aguda vai para a mão direita</small></span></label>
+          <label><input type="radio" name="split" value="pitch" /> <span>Pela altura<small>Notas a partir do Dó central na mão direita</small></span></label>
+        </fieldset>
+      </div>
+      <button id="tracks-start" type="button" class="fab">▶ Começar</button>
+    </section>
+
+    <section id="screen-practice" class="screen" hidden>
+      <header class="pbar">
+        <button type="button" class="icon back" aria-label="Voltar">←</button>
+        <div class="ptitle">
+          <small id="p-title"></small>
+          <strong id="p-stats">0/0 · 100% · 0 erros</strong>
+        </div>
+        <div class="segmented" role="tablist">
+          <button type="button" data-view="score" class="active" aria-label="Partitura"><span class="ico">𝄞</span><span class="lbl">Partitura</span></button>
+          <button type="button" data-view="keys" aria-label="Teclado"><span class="ico">🎹</span><span class="lbl">Teclado</span></button>
+        </div>
+        <select id="hand-mode" class="chip" aria-label="Mão praticada">
+          <option value="both">2 mãos</option>
+          <option value="rh">Mão direita</option>
+          <option value="lh">Mão esquerda</option>
+        </select>
+        <span id="meter" class="meter" title="Entrada"><i></i><i></i><i></i><i></i><b>USB</b></span>
+        <button id="play" type="button" class="play">▶ Tocar</button>
+        <button id="p-menu" type="button" class="icon" aria-label="Opções">⋮</button>
+      </header>
+      <div id="banner" class="banner" hidden><span></span><button type="button" hidden></button></div>
+      <main class="pcontent">
+        <div id="view-score" class="view">
+          <div id="sheet-wrap"><div id="sheet"></div></div>
+        </div>
+        <div id="view-keys" class="view" hidden>
+          <div class="keys-info">
+            <span id="k-chord" class="k-chord"></span>
+            <span id="k-next" class="k-next"></span>
+          </div>
+          <div id="keys-window" class="keys-window"><div id="keyboard"></div></div>
+        </div>
+        <div class="steppers">
+          <button id="prev" type="button" class="float" aria-label="Passo anterior">‹</button>
+          <button id="next" type="button" class="float" aria-label="Próximo passo">›</button>
+        </div>
+        <div id="snackbar" class="snackbar" hidden></div>
+        <div id="loading" class="loading" hidden><span class="spinner"></span>Preparando partitura…</div>
+      </main>
+      <div id="panel-scrim" class="scrim" hidden></div>
+      <aside id="panel" class="panel" hidden>
+        <h2>Opções</h2>
+        <div class="group">
+          <span class="label">Entrada</span>
+          <div class="segmented wide" id="input-mode">
+            <button type="button" data-input="mic">🎤 Microfone</button>
+            <button type="button" data-input="midi">🎹 MIDI</button>
+          </div>
+          <small id="input-status" class="muted"></small>
+        </div>
+        <div class="group midi-only">
+          <span class="label">Oitava do teclado</span>
+          <div class="stepper">
+            <button id="octave-down" type="button">−</button>
+            <output id="octave-label">0</output>
+            <button id="octave-up" type="button">+</button>
+          </div>
+        </div>
+        <label class="group switch midi-only"><span class="label">Som do app</span><input id="sound-toggle" type="checkbox" checked /></label>
+        <button id="restart" type="button" class="item">↺ Reiniciar</button>
+        <button id="change-tracks" type="button" class="item">☰ Trocar trilhas</button>
+        <button id="open-theory" type="button" class="item">♫ Teoria</button>
+      </aside>
+      <div id="finish" class="overlay" hidden>
+        <div class="card">
+          <h2>Música concluída!</h2>
+          <p class="result"><span id="f-pct">0%</span><small>de primeira</small></p>
+          <p id="f-detail" class="muted"></p>
+          <div class="row">
+            <button id="f-again" type="button" class="primary">Tocar de novo</button>
+            <button id="f-library" type="button">Biblioteca</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="screen-theory" class="screen" hidden>
+      <header class="appbar">
+        <button type="button" class="icon back" aria-label="Voltar">←</button>
+        <h1>Teoria</h1>
+      </header>
+      <div class="theory-layout">
+        <nav id="theory-rail"></nav>
+        <div id="theory"></div>
+      </div>
+    </section>
+
+    <div id="rotate" class="rotate">
+      <div class="phone">📱</div>
+      <p>Gire o celular para praticar</p>
+      <button type="button" class="back">Voltar</button>
+    </div>
+
+    <div id="modal" class="overlay" hidden>
+      <div class="card">
+        <h2 id="m-title"></h2>
+        <p id="m-text" class="muted"></p>
+        <input id="m-input" type="text" autocomplete="off" hidden />
+        <div class="row end">
+          <button id="m-cancel" type="button">Cancelar</button>
+          <button id="m-ok" type="button" class="primary">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

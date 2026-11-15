@@ -1,7 +1,7 @@
 {
   "name": "learn-piano",
   "desktopName": "learn-piano.desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Practice piano with sheet music and a MIDI keyboard, wait-mode style",
   "main": "./out/main/index.js",
@@ -10,17 +10,39 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "setup:pdmx": "node scripts/setup-pdmx.mjs"
+    "setup:pdmx": "node scripts/setup-pdmx.mjs",
+    "dev:mobile": "vite -c vite.mobile.config.ts",
+    "build:mobile": "vite build -c vite.mobile.config.ts",
+    "android:sync": "npm run build:mobile && cap sync android",
+    "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "dist:linux": "electron-vite build && electron-builder --linux deb pacman --publish never",
+    "dist:win": "electron-vite build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
-    "@tonejs/midi": "2.0.28",
-    "opensheetmusicdisplay": "2.3.1",
-    "smplr": "1.2.0"
+    "@tonejs/midi": "2.0.28"
   },
   "devDependencies": {
+    "@capacitor-community/keep-awake": "8.0.1",
+    "@capacitor/android": "8.6.2",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/browser": "8.0.5",
+    "@capacitor/cli": "8.6.2",
+    "@capacitor/clipboard": "8.0.1",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/screen-orientation": "8.0.2",
+    "@capacitor/status-bar": "8.0.4",
     "electron": "45.3.2",
+    "electron-builder": "26.18.0",
     "electron-vite": "6.0.0",
+    "opensheetmusicdisplay": "2.3.1",
+    "smplr": "1.2.0",
     "typescript": "7.0.2",
     "vite": "8.3.8"
-  }
+  },
+  "author": {
+    "name": "Piedro Rockembach",
+    "email": "PiedroRockembach@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/PiedroRockembach/learn-piano"
 }

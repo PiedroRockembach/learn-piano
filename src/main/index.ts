@@ -1,11 +1,20 @@
 import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
+import { bitmidiSource } from "../shared/bitmidi";
+import { Library } from "../shared/library";
 import { parseSequenceId } from "../shared/onlinesequencer";
+import { Search } from "../shared/search";
 import type { SongRef } from "../shared/types";
+import { loadAliases } from "./aliases";
 import { openInSystemBrowser } from "./browser";
-import { download, importMidiFile, importOnlineSequence, listLibrary, readLibraryFile, removeFromLibrary } from "./library";
-import { pdmxAvailable } from "./pdmx";
-import { search } from "./search";
+import { nodeHttp, nodeStore } from "./node-platform";
+import { dataDir } from "./paths";
+import { pdmxAvailable, pdmxSource, readPdmxMidi } from "./pdmx";
+
+const library = new Library(nodeStore(dataDir), nodeHttp, (ref) => (ref.source === "pdmx" ? readPdmxMidi(ref.id) : null));
+const search = new Search([pdmxSource, bitmidiSource(nodeHttp)], loadAliases);
 
 const preload = join(__dirname, "../preload/index.js");
 let mainWindow: BrowserWindow | null = null;
@@ -37,11 +46,11 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(allowed.has(permission)));
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => allowed.has(permission));
 
-  ipcMain.handle("search", (_e, query: string, page: number) => search(query, page));
-  ipcMain.handle("download", (_e, ref: SongRef) => download(ref));
-  ipcMain.handle("library:list", () => listLibrary());
-  ipcMain.handle("library:read", (_e, fileName: string) => readLibraryFile(fileName));
-  ipcMain.handle("library:remove", (_e, fileName: string) => removeFromLibrary(fileName));
+  ipcMain.handle("search", (_e, query: string, page: number) => search.page(query, page));
+  ipcMain.handle("download", (_e, ref: SongRef) => library.download(ref));
+  ipcMain.handle("library:list", () => library.list());
+  ipcMain.handle("library:read", (_e, fileName: string) => library.read(fileName));
+  ipcMain.handle("library:remove", (_e, fileName: string) => library.remove(fileName));
   ipcMain.handle("library:import-file", async () => {
     const options: Electron.OpenDialogOptions = {
       title: "Adicionar MIDI",
@@ -52,17 +61,18 @@ app.whenReady().then(() => {
     const { canceled, filePaths } = mainWindow
       ? await dialog.showOpenDialog(mainWindow, options)
       : await dialog.showOpenDialog(options);
-    return canceled || !filePaths[0] ? null : importMidiFile(filePaths[0]);
+    const path = filePaths[0];
+    return canceled || !path ? null : library.importLocal(basename(path), path, new Uint8Array(await readFile(path)));
   });
   ipcMain.handle("onlinesequencer:import", (_e, link: string, title: string) => {
     const id = parseSequenceId(link);
     if (!id) throw new Error("link da Online Sequencer inválido");
-    return importOnlineSequence(id, title.trim() || `Online Sequencer #${id}`);
+    return library.importOnlineSequence(id, title.trim() || `Online Sequencer #${id}`);
   });
   ipcMain.handle("status", () => ({ pdmx: pdmxAvailable() }));
   ipcMain.handle("browser:open", (_e, url: string) => {
     if (!/^https?:\/\//.test(url)) throw new Error("URL inválida");
-    return openInSystemBrowser(url, (entry) => {
+    return openInSystemBrowser(library, url, (entry) => {
       mainWindow?.webContents.send("library:imported", entry);
       mainWindow?.focus();
     });

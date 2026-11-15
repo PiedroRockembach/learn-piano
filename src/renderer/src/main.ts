@@ -1,38 +1,30 @@
-import { Midi } from "@tonejs/midi";
+import type { Midi } from "@tonejs/midi";
 import { parseSequenceId } from "../../shared/onlinesequencer";
 import type { LibraryEntry, SongRef } from "../../shared/types";
-import { PianoSound } from "./audio";
-import { VirtualKeyboard } from "./keyboard";
-import { MicInput } from "./mic-input";
 import { startComputerKeyboard, startMidiInput } from "./midi-input";
-import { Practice, type HandMode, type PracticeStats, type ScoreLayout } from "./practice";
-import { defaultTrackSelection, describeTracks, midiToScore, type SplitMode } from "./score/convert";
+import type { HandMode, PracticeStats, ScoreLayout } from "./practice";
+import { defaultTrackSelection, describeTracks } from "./score/convert";
+import { noteLabel, Session, type InputMode, type TrackChoice } from "./session";
 import { renderTheory } from "./theory";
 
 const api = window.learnPiano;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
-const sound = new PianoSound();
-const keyboard = new VirtualKeyboard($("keyboard"));
-const practice = new Practice($("sheet"), sound, keyboard, renderStats, renderPlayState);
+const session = new Session(
+  $("sheet"),
+  $("keyboard"),
+  {
+    stats: renderStats,
+    playState: renderPlayState,
+    inputStatus: renderInputStatus,
+    level: (v) => $("mic-level").firstElementChild!.setAttribute("style", `width:${Math.round(v * 100)}%`),
+    octave: (o) => ($("octave-label").textContent = `Oitava ${o > 0 ? "+" : ""}${o}`),
+  },
+  "midi",
+);
+const { practice, sound } = session;
 const handMode = $<HTMLSelectElement>("hand-mode");
 const songList = $<HTMLUListElement>("song-list");
-
-// The AZ Keys KS61BT has 61 keys: MIDI 36 (C2) to 96 (C7) with no octave shift.
-const PHYSICAL_LOW = 36;
-const PHYSICAL_HIGH = 96;
-const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const noteLabel = (p: number) => `${NOTE_NAMES[p % 12]}${Math.floor(p / 12) - 1}`;
-
-let octave = 0;
-const held = new Map<number, number>();
-
-type InputMode = "midi" | "mic";
-let inputMode: InputMode = "midi";
-let midiNames: string[] = [];
-let micLabel = "";
-// Playback through the speakers keeps echoing for a moment after it stops.
-let micQuietUntil = 0;
 
 let tab: "results" | "library" = "results";
 let lastQuery = "";
@@ -55,91 +47,24 @@ function renderStats(s: PracticeStats): void {
 }
 
 function renderPlayState(playing: boolean): void {
-  if (!playing) micQuietUntil = performance.now() + 800;
   const button = $("play");
   button.textContent = playing ? "■ Parar" : "▶ Tocar";
   button.classList.toggle("primary", playing);
 }
 
-function setOctave(next: number): void {
-  octave = Math.max(-3, Math.min(3, next));
-  $("octave-label").textContent = `Oitava ${octave > 0 ? "+" : ""}${octave}`;
-  keyboard.setReach(PHYSICAL_LOW + 12 * octave, PHYSICAL_HIGH + 12 * octave);
-}
-
-function onNoteOn(raw: number, velocity: number): void {
-  const pitch = raw + 12 * octave;
-  held.set(raw, pitch);
-  sound.noteOn(pitch, velocity);
-  keyboard.set(pitch, "pressed", true);
-  practice.noteOn(pitch);
-}
-
-// Releases use the pitch the key was pressed with, so changing octave mid-hold never leaves a stuck note.
-function onNoteOff(raw: number): void {
-  const pitch = held.get(raw) ?? raw + 12 * octave;
-  held.delete(raw);
-  sound.noteOff(pitch);
-  keyboard.set(pitch, "pressed", false);
-  keyboard.set(pitch, "correct", false);
-}
-
-// The microphone hears real pitches and the instrument makes its own sound: no octave shift, no echo.
-function onHeardNoteOn(pitch: number): void {
-  keyboard.set(pitch, "pressed", true);
-  practice.noteOn(pitch);
-}
-
-function onHeardNoteOff(pitch: number): void {
-  keyboard.set(pitch, "pressed", false);
-  keyboard.set(pitch, "correct", false);
-}
-
-const mic = new MicInput(
-  {
-    noteOn: onHeardNoteOn,
-    noteOff: onHeardNoteOff,
-    level: (v) => {
-      $("mic-level").firstElementChild!.setAttribute("style", `width:${Math.round(v * 100)}%`);
-    },
-  },
-  () => practice.expectedPitches(),
-  () => practice.isPlaying || performance.now() < micQuietUntil,
-);
-
-function renderInputStatus(): void {
+function renderInputStatus(mode: InputMode, ok: boolean, text: string): void {
+  $<HTMLSelectElement>("input-mode").value = mode;
+  $("mic-level").hidden = mode !== "mic";
   const el = $("midi-status");
-  $("mic-level").hidden = inputMode !== "mic";
-  if (inputMode === "mic") {
-    el.textContent = mic.active ? `Mic: ${micLabel}` : "Mic: desligado";
-    el.classList.toggle("ok", mic.active);
-  } else {
-    el.textContent = midiNames.length ? `MIDI: ${midiNames.join(", ")}` : "MIDI: nenhum teclado";
-    el.classList.toggle("ok", midiNames.length > 0);
-  }
+  el.textContent = text;
+  el.classList.toggle("ok", ok);
 }
 
 async function setInputMode(mode: InputMode): Promise<void> {
-  inputMode = mode;
-  $<HTMLSelectElement>("input-mode").value = mode;
-  practice.autoPlayOtherHand = mode === "midi";
-  try {
-    localStorage.setItem("inputMode", mode);
-  } catch {
-    // storage unavailable: the choice just isn't remembered
-  }
-  if (mode === "mic") {
-    try {
-      micLabel = await mic.start();
-    } catch (e) {
-      setStatus(`Microfone indisponível: ${(e as Error).message}`, true);
-      await setInputMode("midi");
-      return;
-    }
-  } else {
-    mic.stop();
-  }
-  renderInputStatus();
+  const error = await session.setInputMode(mode);
+  if (!error) return;
+  setStatus(error, true);
+  await session.setInputMode("midi");
 }
 
 function renderList(items: (SongRef | LibraryEntry)[]): void {
@@ -282,20 +207,19 @@ async function openSong(ref: SongRef | LibraryEntry, li: HTMLElement): Promise<v
   setStatus(`Baixando “${ref.title}”…`);
   try {
     const bytes = "fileName" in ref ? await api.readLibrary(ref.fileName) : (await api.download(ref)).bytes;
-    const midi = new Midi(bytes);
-    const choice = await chooseTracks(midi);
-    if (!choice) {
+    const score = await session.openSong(bytes, ref.title, handMode.value as HandMode, (midi) => {
+      const choice = chooseTracks(midi);
+      void choice.then((c) => c && setStatus("Gerando partitura…"));
+      return choice;
+    });
+    if (!score) {
       setStatus("");
       return;
     }
-    setStatus("Gerando partitura…");
-    const score = midiToScore(midi, ref.title, { tracks: choice.tracks, split: choice.split, splitPoint: 60 });
-    await practice.load(score, handMode.value as HandMode);
     renderTheory($("theory"), score);
     $("song-title").textContent = ref.title;
-    const outOfReach = score.minPitch < PHYSICAL_LOW || score.maxPitch > PHYSICAL_HIGH;
     setStatus(
-      outOfReach
+      session.outOfReach(score)
         ? `A música vai de ${noteLabel(score.minPitch)} a ${noteLabel(score.maxPitch)}, além das 61 teclas: use Oitava − / + (Z / X) quando a nota pedida cair na área escura.`
         : "",
     );
@@ -304,7 +228,7 @@ async function openSong(ref: SongRef | LibraryEntry, li: HTMLElement): Promise<v
   }
 }
 
-function chooseTracks(midi: Midi): Promise<{ tracks: number[]; split: SplitMode } | null> {
+function chooseTracks(midi: Midi): Promise<TrackChoice | null> {
   const dialog = $<HTMLDialogElement>("track-dialog");
   const list = $<HTMLUListElement>("track-list");
   const tracks = describeTracks(midi);
@@ -334,7 +258,7 @@ function chooseTracks(midi: Midi): Promise<{ tracks: number[]; split: SplitMode 
       () => {
         if (dialog.returnValue !== "ok") return resolve(null);
         const chosen = [...list.querySelectorAll<HTMLInputElement>("input:checked")].map((b) => Number(b.value));
-        resolve(chosen.length ? { tracks: chosen, split: $<HTMLSelectElement>("split-mode").value as SplitMode } : null);
+        resolve(chosen.length ? { tracks: chosen, split: $<HTMLSelectElement>("split-mode").value as TrackChoice["split"] } : null);
       },
       { once: true },
     );
@@ -360,9 +284,8 @@ document.querySelectorAll<HTMLButtonElement>("#view-tabs button").forEach((b) =>
   });
 });
 renderTheory($("theory"), null);
-$("octave-down").addEventListener("click", () => setOctave(octave - 1));
-$("octave-up").addEventListener("click", () => setOctave(octave + 1));
-setOctave(0);
+$("octave-down").addEventListener("click", () => session.setOctave(session.octave - 1));
+$("octave-up").addEventListener("click", () => session.setOctave(session.octave + 1));
 handMode.addEventListener("change", () => practice.setMode(handMode.value as HandMode));
 $("restart").addEventListener("click", () => practice.restart());
 $("play").addEventListener("click", () => practice.togglePlay());
@@ -408,30 +331,18 @@ window.addEventListener("keydown", (e) => {
   } else if (e.key === "ArrowRight") practice.skip(1);
   else if (e.key === "ArrowLeft") practice.skip(-1);
   else if (e.key === "r" && !e.ctrlKey) practice.restart();
-  else if (e.key === "z" && !e.ctrlKey) setOctave(octave - 1);
-  else if (e.key === "x" && !e.ctrlKey) setOctave(octave + 1);
+  else if (e.key === "z" && !e.ctrlKey) session.setOctave(session.octave - 1);
+  else if (e.key === "x" && !e.ctrlKey) session.setOctave(session.octave + 1);
 });
 
 $<HTMLSelectElement>("input-mode").addEventListener("change", (e) => {
   void setInputMode((e.target as HTMLSelectElement).value as InputMode);
 });
-try {
-  if (localStorage.getItem("inputMode") === "mic") void setInputMode("mic");
-} catch {
-  // storage unavailable: start with MIDI
-}
-
-startComputerKeyboard({ noteOn: onNoteOn, noteOff: onNoteOff });
-startMidiInput({
-  noteOn: (pitch, velocity) => inputMode === "midi" && onNoteOn(pitch, velocity),
-  noteOff: onNoteOff,
-  sustain: (down) => sound.sustain(down),
-  devicesChanged: (names) => {
-    midiNames = names;
-    renderInputStatus();
-  },
-}).catch((e) => {
-  $("midi-status").textContent = `MIDI indisponível: ${(e as Error).message}`;
+startComputerKeyboard({ noteOn: (p, v) => session.noteOn(p, v), noteOff: (p) => session.noteOff(p) });
+void session.start(startMidiInput).then(async (error) => {
+  if (!error) return;
+  setStatus(error, true);
+  await session.setInputMode("midi");
 });
 
 $("open-browser").addEventListener("click", () => {
