@@ -40,6 +40,17 @@ export class PianoSound {
     this.piano.start({ note: pitch, velocity, time: this.ctx.currentTime + delaySec, duration: durationSec });
   }
 
+  now(): number {
+    return this.ctx.currentTime;
+  }
+
+  // Absolute AudioContext time; the returned function cancels the note or cuts it short.
+  schedule(pitch: number, velocity: number, time: number, durationSec: number): StopFn | null {
+    if (!this.enabled) return null;
+    void this.ctx.resume();
+    return this.piano.start({ note: pitch, velocity, time, duration: durationSec });
+  }
+
   stopAll(): void {
     this.piano.stop();
     this.voices.clear();

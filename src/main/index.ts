@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
 import { join } from "node:path";
+import { parseSequenceId } from "../shared/onlinesequencer";
 import type { SongRef } from "../shared/types";
 import { openInSystemBrowser } from "./browser";
-import { download, listLibrary, readLibraryFile } from "./library";
+import { download, importMidiFile, importOnlineSequence, listLibrary, readLibraryFile, removeFromLibrary } from "./library";
 import { pdmxAvailable } from "./pdmx";
 import { search } from "./search";
 
@@ -23,6 +24,7 @@ function createWindow(): void {
       contextIsolation: true,
       sandbox: true,
       autoplayPolicy: "no-user-gesture-required",
+      backgroundThrottling: false,
     },
   });
   mainWindow.on("closed", () => app.quit());
@@ -39,6 +41,24 @@ app.whenReady().then(() => {
   ipcMain.handle("download", (_e, ref: SongRef) => download(ref));
   ipcMain.handle("library:list", () => listLibrary());
   ipcMain.handle("library:read", (_e, fileName: string) => readLibraryFile(fileName));
+  ipcMain.handle("library:remove", (_e, fileName: string) => removeFromLibrary(fileName));
+  ipcMain.handle("library:import-file", async () => {
+    const options: Electron.OpenDialogOptions = {
+      title: "Adicionar MIDI",
+      defaultPath: app.getPath("downloads"),
+      properties: ["openFile"],
+      filters: [{ name: "Arquivos MIDI", extensions: ["mid", "midi", "MID", "MIDI"] }],
+    };
+    const { canceled, filePaths } = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    return canceled || !filePaths[0] ? null : importMidiFile(filePaths[0]);
+  });
+  ipcMain.handle("onlinesequencer:import", (_e, link: string, title: string) => {
+    const id = parseSequenceId(link);
+    if (!id) throw new Error("link da Online Sequencer inválido");
+    return importOnlineSequence(id, title.trim() || `Online Sequencer #${id}`);
+  });
   ipcMain.handle("status", () => ({ pdmx: pdmxAvailable() }));
   ipcMain.handle("browser:open", (_e, url: string) => {
     if (!/^https?:\/\//.test(url)) throw new Error("URL inválida");

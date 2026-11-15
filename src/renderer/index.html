@@ -12,18 +12,30 @@
   <body>
     <header>
       <form id="search-form">
-        <input id="search-input" type="search" placeholder="Buscar música…" autocomplete="off" />
+        <input id="search-input" type="search" placeholder="Buscar música ou colar link da Online Sequencer…" autocomplete="off" />
         <button type="submit">Buscar</button>
-        <button id="open-browser" type="button" title="Abrir a MidiShow no seu navegador; .mid baixados entram na biblioteca">Navegador</button>
+        <button id="open-browser" type="button" title="Procurar na Online Sequencer pelo seu navegador; cole aqui o link da sequência escolhida">Navegador</button>
+        <button id="import-file" type="button" title="Escolher um .mid do computador e adicioná-lo à biblioteca">Adicionar MIDI</button>
       </form>
       <div class="controls">
+        <div class="octave" title="Desloca as notas do seu teclado de 61 teclas (atalhos: Z desce, X sobe)">
+          <button id="octave-down" type="button">−</button>
+          <span id="octave-label">Oitava 0</span>
+          <button id="octave-up" type="button">+</button>
+        </div>
+        <select id="score-layout" title="Visualização da partitura">
+          <option value="line">Linha</option>
+          <option value="page">Página</option>
+        </select>
         <select id="hand-mode" title="Mão praticada">
           <option value="both">Duas mãos</option>
           <option value="rh">Mão direita</option>
           <option value="lh">Mão esquerda</option>
         </select>
+        <button id="play" type="button" title="Tocar a partir do cursor azul (Espaço)">▶ Tocar</button>
         <button id="restart" type="button" title="Reiniciar (R)">Reiniciar</button>
         <label class="toggle"><input id="sound-toggle" type="checkbox" checked /> Som</label>
+        <label class="toggle" title="Mostrar o teclado virtual embaixo da partitura"><input id="keyboard-toggle" type="checkbox" checked /> Teclado</label>
         <span id="midi-status" class="pill">MIDI: procurando…</span>
       </div>
     </header>
@@ -45,7 +57,14 @@
       <section id="stage">
         <div id="stats"><span id="song-title">Nenhuma música</span><span id="stats-text"></span></div>
         <div id="status"></div>
-        <div id="sheet-wrap"><div id="sheet"></div></div>
+        <nav id="view-tabs">
+          <button type="button" data-view="sheet" class="active">Partitura</button>
+          <button type="button" data-view="theory">Teoria</button>
+        </nav>
+        <div id="view">
+          <div id="sheet-wrap"><div id="sheet"></div></div>
+          <div id="theory" hidden></div>
+        </div>
       </section>
     </main>
 
@@ -67,6 +86,18 @@
         <menu>
           <button value="cancel" formnovalidate>Cancelar</button>
           <button value="ok" class="primary">Abrir partitura</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="title-dialog">
+      <form method="dialog">
+        <h2>Sequência da Online Sequencer</h2>
+        <p class="hint">O site não informa o nome pela API. Como a música deve aparecer na biblioteca?</p>
+        <input id="title-input" type="text" required autocomplete="off" />
+        <menu>
+          <button value="cancel" formnovalidate>Cancelar</button>
+          <button value="ok" class="primary">Importar</button>
         </menu>
       </form>
     </dialog>

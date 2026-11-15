@@ -1,19 +1,30 @@
 import { Midi } from "@tonejs/midi";
+import { parseSequenceId } from "../../shared/onlinesequencer";
 import type { LibraryEntry, SongRef } from "../../shared/types";
 import { PianoSound } from "./audio";
 import { VirtualKeyboard } from "./keyboard";
 import { startComputerKeyboard, startMidiInput } from "./midi-input";
-import { Practice, type HandMode, type PracticeStats } from "./practice";
+import { Practice, type HandMode, type PracticeStats, type ScoreLayout } from "./practice";
 import { defaultTrackSelection, describeTracks, midiToScore, type SplitMode } from "./score/convert";
+import { renderTheory } from "./theory";
 
 const api = window.learnPiano;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const sound = new PianoSound();
 const keyboard = new VirtualKeyboard($("keyboard"));
-const practice = new Practice($("sheet"), sound, keyboard, renderStats);
+const practice = new Practice($("sheet"), sound, keyboard, renderStats, renderPlayState);
 const handMode = $<HTMLSelectElement>("hand-mode");
 const songList = $<HTMLUListElement>("song-list");
+
+// The AZ Keys KS61BT has 61 keys: MIDI 36 (C2) to 96 (C7) with no octave shift.
+const PHYSICAL_LOW = 36;
+const PHYSICAL_HIGH = 96;
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+const noteLabel = (p: number) => `${NOTE_NAMES[p % 12]}${Math.floor(p / 12) - 1}`;
+
+let octave = 0;
+const held = new Map<number, number>();
 
 let tab: "results" | "library" = "results";
 let lastQuery = "";
@@ -35,13 +46,30 @@ function renderStats(s: PracticeStats): void {
   $("stats").classList.toggle("finished", s.finished);
 }
 
-function onNoteOn(pitch: number, velocity: number): void {
+function renderPlayState(playing: boolean): void {
+  const button = $("play");
+  button.textContent = playing ? "■ Parar" : "▶ Tocar";
+  button.classList.toggle("primary", playing);
+}
+
+function setOctave(next: number): void {
+  octave = Math.max(-3, Math.min(3, next));
+  $("octave-label").textContent = `Oitava ${octave > 0 ? "+" : ""}${octave}`;
+  keyboard.setReach(PHYSICAL_LOW + 12 * octave, PHYSICAL_HIGH + 12 * octave);
+}
+
+function onNoteOn(raw: number, velocity: number): void {
+  const pitch = raw + 12 * octave;
+  held.set(raw, pitch);
   sound.noteOn(pitch, velocity);
   keyboard.set(pitch, "pressed", true);
   practice.noteOn(pitch);
 }
 
-function onNoteOff(pitch: number): void {
+// Releases use the pitch the key was pressed with, so changing octave mid-hold never leaves a stuck note.
+function onNoteOff(raw: number): void {
+  const pitch = held.get(raw) ?? raw + 12 * octave;
+  held.delete(raw);
   sound.noteOff(pitch);
   keyboard.set(pitch, "pressed", false);
   keyboard.set(pitch, "correct", false);
@@ -56,6 +84,7 @@ function renderList(items: (SongRef | LibraryEntry)[]): void {
       const detail = document.createElement("small");
       detail.textContent = item.detail ?? item.source;
       li.append(title, detail);
+      if ("fileName" in item) li.append(removeButton(item));
       li.addEventListener("click", () => void openSong(item, li));
       return li;
     }),
@@ -67,20 +96,84 @@ function renderList(items: (SongRef | LibraryEntry)[]): void {
     songList.append(li);
   }
   if (tab === "results" && lastQuery) {
-    const li = document.createElement("li");
-    li.className = "browser-link";
-    li.textContent = `Não achou? Procurar “${lastQuery}” na MidiShow →`;
-    li.addEventListener("click", () => void openBrowser(lastQuery));
-    songList.append(li);
+    for (const site of ["onlinesequencer", "midishow"] as const) {
+      const li = document.createElement("li");
+      li.className = "browser-link";
+      li.textContent = `Não achou? Procurar “${lastQuery}” na ${SITES[site].name} →`;
+      li.addEventListener("click", () => void openBrowser(site, lastQuery));
+      songList.append(li);
+    }
   }
 }
 
-function openBrowser(query: string): Promise<void> {
-  const url = query
-    ? `https://www.midishow.com/en/search/result?q=${encodeURIComponent(query)}`
-    : "https://www.midishow.com/en";
-  setStatus("Abrindo no seu navegador. Baixe o arquivo em MIDI (.mid): ao terminar em ~/Downloads, ele abre aqui sozinho.");
-  return api.openBrowser(url);
+function removeButton(entry: LibraryEntry): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "remove";
+  button.title = "Remover da biblioteca";
+  button.textContent = "×";
+  button.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!confirm(`Remover “${entry.title}” da biblioteca?`)) return;
+    try {
+      await api.removeFromLibrary(entry.fileName);
+      await showLibrary();
+      setStatus(`“${entry.title}” removida da biblioteca.`);
+    } catch (err) {
+      setStatus(`Não foi possível remover: ${(err as Error).message}`, true);
+    }
+  });
+  return button;
+}
+
+// Online Sequencer comes first: it has more covers and its sequences import straight from a pasted link.
+const SITES = {
+  onlinesequencer: {
+    name: "Online Sequencer",
+    search: (q: string) => `https://onlinesequencer.net/sequences?search=${encodeURIComponent(q)}`,
+    home: "https://onlinesequencer.net/sequences",
+    hint: "Abrindo a Online Sequencer no seu navegador. Abra a sequência, copie o endereço (Ctrl+L, Ctrl+C) e cole na busca daqui.",
+  },
+  midishow: {
+    name: "MidiShow",
+    search: (q: string) => `https://www.midishow.com/en/search/result?q=${encodeURIComponent(q)}`,
+    home: "https://www.midishow.com/en",
+    hint: "Abrindo a MidiShow no seu navegador. Baixe o arquivo em MIDI (.mid): ao terminar em ~/Downloads, ele abre aqui sozinho.",
+  },
+};
+
+function openBrowser(site: keyof typeof SITES, query: string): Promise<void> {
+  const s = SITES[site];
+  setStatus(s.hint);
+  return api.openBrowser(query ? s.search(query) : s.home);
+}
+
+function askTitle(suggestion: string): Promise<string | null> {
+  const dialog = $<HTMLDialogElement>("title-dialog");
+  const input = $<HTMLInputElement>("title-input");
+  input.value = suggestion;
+  dialog.returnValue = "";
+  dialog.showModal();
+  input.select();
+  return new Promise((resolve) => {
+    dialog.addEventListener("close", () => resolve(dialog.returnValue === "ok" ? input.value.trim() : null), {
+      once: true,
+    });
+  });
+}
+
+async function importSequence(link: string, id: string): Promise<void> {
+  const title = await askTitle(lastQuery || `Online Sequencer #${id}`);
+  if (!title) return;
+  setStatus("Baixando a sequência da Online Sequencer…");
+  try {
+    const entry = await api.importOnlineSequence(link, title);
+    $<HTMLInputElement>("search-input").value = "";
+    openImported(entry);
+  } catch (e) {
+    const message = (e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+    setStatus(`Não foi possível importar: ${message}`, true);
+  }
 }
 
 async function runSearch(query: string, newPage: number): Promise<void> {
@@ -131,8 +224,14 @@ async function openSong(ref: SongRef | LibraryEntry, li: HTMLElement): Promise<v
     setStatus("Gerando partitura…");
     const score = midiToScore(midi, ref.title, { tracks: choice.tracks, split: choice.split, splitPoint: 60 });
     await practice.load(score, handMode.value as HandMode);
+    renderTheory($("theory"), score);
     $("song-title").textContent = ref.title;
-    setStatus("");
+    const outOfReach = score.minPitch < PHYSICAL_LOW || score.maxPitch > PHYSICAL_HIGH;
+    setStatus(
+      outOfReach
+        ? `A música vai de ${noteLabel(score.minPitch)} a ${noteLabel(score.maxPitch)}, além das 61 teclas: use Oitava − / + (Z / X) quando a nota pedida cair na área escura.`
+        : "",
+    );
   } catch (e) {
     setStatus(`Não foi possível abrir: ${(e as Error).message}`, true);
   }
@@ -177,23 +276,73 @@ function chooseTracks(midi: Midi): Promise<{ tracks: number[]; split: SplitMode 
 
 $("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
-  void runSearch($<HTMLInputElement>("search-input").value.trim(), 0);
+  const query = $<HTMLInputElement>("search-input").value.trim();
+  const sequenceId = parseSequenceId(query);
+  if (sequenceId) void importSequence(query, sequenceId);
+  else void runSearch(query, 0);
 });
 $("prev-page").addEventListener("click", () => page > 0 && void runSearch(lastQuery, page - 1));
 $("next-page").addEventListener("click", () => page + 1 < pageTotal && void runSearch(lastQuery, page + 1));
 document.querySelectorAll<HTMLButtonElement>("aside nav button").forEach((b) => {
   b.addEventListener("click", () => switchTab(b.dataset.tab as "results" | "library"));
 });
+document.querySelectorAll<HTMLButtonElement>("#view-tabs button").forEach((b) => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#view-tabs button").forEach((x) => x.classList.toggle("active", x === b));
+    $("theory").hidden = b.dataset.view !== "theory";
+  });
+});
+renderTheory($("theory"), null);
+$("octave-down").addEventListener("click", () => setOctave(octave - 1));
+$("octave-up").addEventListener("click", () => setOctave(octave + 1));
+setOctave(0);
 handMode.addEventListener("change", () => practice.setMode(handMode.value as HandMode));
 $("restart").addEventListener("click", () => practice.restart());
+$("play").addEventListener("click", () => practice.togglePlay());
+const scoreLayout = $<HTMLSelectElement>("score-layout");
+try {
+  if (localStorage.getItem("scoreLayout") === "page") scoreLayout.value = "page";
+} catch {
+  // storage unavailable: default to line view
+}
+practice.setLayout(scoreLayout.value as ScoreLayout);
+scoreLayout.addEventListener("change", () => {
+  practice.setLayout(scoreLayout.value as ScoreLayout);
+  try {
+    localStorage.setItem("scoreLayout", scoreLayout.value);
+  } catch {
+    // storage unavailable: the choice just isn't remembered
+  }
+});
+const keyboardToggle = $<HTMLInputElement>("keyboard-toggle");
+const showKeyboard = (on: boolean) => {
+  keyboardToggle.checked = on;
+  document.body.classList.toggle("no-keyboard", !on);
+  try {
+    localStorage.setItem("showKeyboard", on ? "1" : "0");
+  } catch {
+    // storage unavailable: the choice just isn't remembered
+  }
+};
+try {
+  showKeyboard(localStorage.getItem("showKeyboard") !== "0");
+} catch {
+  showKeyboard(true);
+}
+keyboardToggle.addEventListener("change", () => showKeyboard(keyboardToggle.checked));
 $<HTMLInputElement>("sound-toggle").addEventListener("change", (e) => {
   sound.enabled = (e.target as HTMLInputElement).checked;
 });
 window.addEventListener("keydown", (e) => {
   if (e.target instanceof HTMLInputElement) return;
-  if (e.key === "ArrowRight") practice.skip(1);
+  if (e.key === " " && !(e.target instanceof HTMLButtonElement || e.target instanceof HTMLSelectElement)) {
+    e.preventDefault();
+    practice.togglePlay();
+  } else if (e.key === "ArrowRight") practice.skip(1);
   else if (e.key === "ArrowLeft") practice.skip(-1);
   else if (e.key === "r" && !e.ctrlKey) practice.restart();
+  else if (e.key === "z" && !e.ctrlKey) setOctave(octave - 1);
+  else if (e.key === "x" && !e.ctrlKey) setOctave(octave + 1);
 });
 
 startComputerKeyboard({ noteOn: onNoteOn, noteOff: onNoteOff });
@@ -211,11 +360,21 @@ startMidiInput({
 });
 
 $("open-browser").addEventListener("click", () => {
-  void openBrowser($<HTMLInputElement>("search-input").value.trim());
+  void openBrowser("onlinesequencer", $<HTMLInputElement>("search-input").value.trim());
 });
-api.onImported((entry) => {
+function openImported(entry: LibraryEntry): void {
   switchTab("library", false);
   void showLibrary().then(() => void openSong(entry, songList.querySelector("li") ?? document.createElement("li")));
+}
+api.onImported(openImported);
+$("import-file").addEventListener("click", async () => {
+  try {
+    const entry = await api.importFile();
+    if (entry) openImported(entry);
+  } catch (e) {
+    const message = (e as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "");
+    setStatus(`Não foi possível adicionar: ${message}`, true);
+  }
 });
 
 setStatus("Carregando som de piano…");

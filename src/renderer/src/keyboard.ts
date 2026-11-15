@@ -5,6 +5,7 @@ export type KeyMark = "expected-rh" | "expected-lh" | "pressed" | "wrong" | "cor
 
 export class VirtualKeyboard {
   private keys = new Map<number, HTMLElement>();
+  private reach: [number, number] | null = null;
 
   constructor(private readonly root: HTMLElement) {
     this.setRange(36, 96);
@@ -29,6 +30,13 @@ export class VirtualKeyboard {
       this.root.appendChild(el);
       this.keys.set(p, el);
     }
+    if (this.reach) this.setReach(...this.reach);
+  }
+
+  // Keys the physical keyboard cannot reach at the current octave shift are dimmed.
+  setReach(low: number, high: number): void {
+    this.reach = [low, high];
+    this.keys.forEach((el, p) => el.classList.toggle("out", p < low || p > high));
   }
 
   set(pitch: number, mark: KeyMark, on: boolean): void {

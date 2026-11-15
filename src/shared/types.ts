@@ -1,4 +1,4 @@
-export type SourceId = "bitmidi" | "pdmx" | "browser";
+export type SourceId = "bitmidi" | "pdmx" | "browser" | "local" | "onlinesequencer";
 
 export interface SongRef {
   source: SourceId;
@@ -24,7 +24,10 @@ export interface LearnPianoApi {
   download(ref: SongRef): Promise<{ entry: LibraryEntry; bytes: Uint8Array }>;
   listLibrary(): Promise<LibraryEntry[]>;
   readLibrary(fileName: string): Promise<Uint8Array>;
+  removeFromLibrary(fileName: string): Promise<void>;
   status(): Promise<{ pdmx: boolean }>;
   openBrowser(url: string): Promise<void>;
+  importFile(): Promise<LibraryEntry | null>;
+  importOnlineSequence(link: string, title: string): Promise<LibraryEntry>;
   onImported(cb: (entry: LibraryEntry) => void): void;
 }

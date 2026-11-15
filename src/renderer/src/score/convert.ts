@@ -1,4 +1,5 @@
 import type { Midi } from "@tonejs/midi";
+import { analyzeHarmony, harmonyXml, spell, type HarmonyAnalysis } from "./harmony";
 
 export const UNITS_PER_QUARTER = 4;
 const UNITS_PER_WHOLE = UNITS_PER_QUARTER * 4;
@@ -40,8 +41,10 @@ export interface ConvertedScore {
   musicXml: string;
   positions: Map<number, Position>;
   bpm: number;
+  seconds: (unit: number) => number;
   minPitch: number;
   maxPitch: number;
+  harmony: HarmonyAnalysis;
 }
 
 interface QNote {
@@ -107,6 +110,8 @@ export function midiToScore(midi: Midi, title: string, opts: ConvertOptions): Co
   const lastEnd = notes.reduce((m, n) => Math.max(m, n.end), 0);
   const measures = buildMeasures(midi, q, Math.max(lastEnd, 1));
   const fifths = detectKey(midi, notes);
+  const harmony = analyzeHarmony(notes, measures, fifths);
+  const harmonyAt = new Map(harmony.chords.map((c) => [c.unit, harmonyXml(c, fifths)]));
   const bpm = Math.round(midi.header.tempos[0]?.bpm ?? 120);
 
   const rhItems = buildItems(notes.filter((n) => n.hand === "rh"));
@@ -116,9 +121,9 @@ export function midiToScore(midi: Midi, title: string, opts: ConvertOptions): Co
     const parts: string[] = [];
     if (i === 0 || m.timeChanged) parts.push(attributesXml(m, i === 0 ? fifths : null));
     if (i === 0) parts.push(tempoXml(bpm));
-    parts.push(staffXml(rhItems, m, 1, fifths));
+    parts.push(staffXml(rhItems, m, 1, fifths, harmonyAt));
     parts.push(`<backup><duration>${m.length}</duration></backup>`);
-    parts.push(staffXml(lhItems, m, 2, fifths));
+    parts.push(staffXml(lhItems, m, 2, fifths, new Map()));
     return `<measure number="${i + 1}">${parts.join("")}</measure>`;
   });
 
@@ -133,8 +138,10 @@ export function midiToScore(midi: Midi, title: string, opts: ConvertOptions): Co
     musicXml,
     positions: buildPositions(notes),
     bpm,
+    seconds: (unit) => midi.header.ticksToSeconds(unit * unitTicks),
     minPitch: notes.reduce((m, n) => Math.min(m, n.pitch), 127),
     maxPitch: notes.reduce((m, n) => Math.max(m, n.pitch), 0),
+    harmony,
   };
 }
 
@@ -197,22 +204,26 @@ const MINOR_KEYS: Record<string, number> = {
 };
 
 function detectKey(midi: Midi, notes: QNote[]): number {
-  const ks = midi.header.keySignatures[0];
-  if (ks) {
-    const table = ks.scale === "minor" ? MINOR_KEYS : MAJOR_KEYS;
-    if (ks.key in table) return table[ks.key];
-  }
   const weight = new Array(12).fill(0);
   for (const n of notes) weight[n.pitch % 12] += n.end - n.start;
+  const fit = (f: number) => {
+    const tonic = (((7 * f) % 12) + 12) % 12;
+    return [0, 2, 4, 5, 7, 9, 11].reduce((s, d) => s + weight[(tonic + d) % 12], 0);
+  };
   let best = 0;
   let bestScore = -1;
   for (let f = -6; f <= 6; f++) {
-    const tonic = (((7 * f) % 12) + 12) % 12;
-    const score = [0, 2, 4, 5, 7, 9, 11].reduce((s, d) => s + weight[(tonic + d) % 12], 0);
+    const score = fit(f);
     if (score > bestScore || (score === bestScore && Math.abs(f) < Math.abs(best))) {
       best = f;
       bestScore = score;
     }
+  }
+  // Many MIDI files carry a default "C major" key event; trust the header only when the notes agree with it.
+  const ks = midi.header.keySignatures[0];
+  if (ks) {
+    const table = ks.scale === "minor" ? MINOR_KEYS : MAJOR_KEYS;
+    if (ks.key in table && fit(table[ks.key]) >= bestScore * 0.95) return table[ks.key];
   }
   return best;
 }
@@ -248,24 +259,38 @@ function buildPositions(notes: QNote[]): Map<number, Position> {
   return positions;
 }
 
-function staffXml(items: Item[], m: Measure, staff: 1 | 2, fifths: number): string {
+// Chord symbols attach to the note starting at their timestamp (OSMD ignores <offset>),
+// so notes and rests are cut with ties wherever a chord change falls inside them.
+function staffXml(items: Item[], m: Measure, staff: 1 | 2, fifths: number, harmonyAt: Map<number, string>): string {
   const mEnd = m.start + m.length;
   const voice = staff === 1 ? 1 : 5;
   const inMeasure = items.filter((it) => it.start < mEnd && it.end > m.start);
+  const cuts = [...harmonyAt.keys()].filter((u) => u >= m.start && u < mEnd);
 
-  if (!inMeasure.some((it) => it.pitches)) {
+  if (!inMeasure.some((it) => it.pitches) && !cuts.length) {
     return `<note><rest measure="yes"/><duration>${m.length}</duration><voice>${voice}</voice><staff>${staff}</staff></note>`;
   }
 
   const out: string[] = [];
   let cursor = m.start;
-  const emit = (start: number, end: number, pitches: number[] | null, tieIn: boolean, tieOut: boolean) => {
+  const emitPiece = (start: number, end: number, pitches: number[] | null, tieIn: boolean, tieOut: boolean) => {
+    const chord = harmonyAt.get(start);
+    if (chord) out.push(chord);
     const pieces = splitDuration(start - m.start, end - start);
     pieces.forEach((dur, k) => {
       const tStop = tieIn || k > 0;
       const tStart = tieOut || k < pieces.length - 1;
       out.push(noteXml(pitches, dur, voice, staff, fifths, tStart, tStop));
     });
+  };
+  const emit = (start: number, end: number, pitches: number[] | null, tieIn: boolean, tieOut: boolean) => {
+    const bounds = [start, ...cuts.filter((u) => u > start && u < end), end];
+    for (let k = 0; k < bounds.length - 1; k++) {
+      const first = k === 0;
+      const last = k === bounds.length - 2;
+      const tied = pitches !== null;
+      emitPiece(bounds[k], bounds[k + 1], pitches, first ? tieIn : tied, last ? tieOut : tied);
+    }
   };
 
   for (const it of inMeasure) {
@@ -300,22 +325,6 @@ function isAligned(pos: number, value: number): boolean {
   if (value === 16) return pos === 0;
   const base = DOTTED.has(value) ? (value * 2) / 3 : value;
   return pos % Math.min(base, UNITS_PER_QUARTER) === 0;
-}
-
-const SHARP_SPELLING: [string, number][] = [
-  ["C", 0], ["C", 1], ["D", 0], ["D", 1], ["E", 0], ["F", 0], ["F", 1], ["G", 0], ["G", 1], ["A", 0], ["A", 1], ["B", 0],
-];
-const FLAT_SPELLING: [string, number][] = [
-  ["C", 0], ["D", -1], ["D", 0], ["E", -1], ["E", 0], ["F", 0], ["G", -1], ["G", 0], ["A", -1], ["A", 0], ["B", -1], ["B", 0],
-];
-
-function spell(pitch: number, fifths: number): { step: string; alter: number; octave: number } {
-  const pc = pitch % 12;
-  let octave = Math.floor(pitch / 12) - 1;
-  if (fifths >= 6 && pc === 5) return { step: "E", alter: 1, octave };
-  if (fifths <= -6 && pc === 11) return { step: "C", alter: -1, octave: octave + 1 };
-  const [step, alter] = (fifths >= 0 ? SHARP_SPELLING : FLAT_SPELLING)[pc];
-  return { step, alter, octave };
 }
 
 function noteXml(
