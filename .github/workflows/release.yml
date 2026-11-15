@@ -1,0 +1,130 @@
+name: Release
+
+# Publishes a GitHub Release with installers for Arch Linux, Debian/Ubuntu, Windows and Android.
+# Trigger: push a tag like v0.2.0, or run it by hand from the Actions tab giving the tag to create.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag da release (ex.: v0.2.0), criada no commit selecionado"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: bsdtar for the pacman target
+        run: sudo apt-get update && sudo apt-get install -y libarchive-tools
+      - run: npm ci
+      - run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+      - run: npm run dist:linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            release/*.deb
+            release/*.pacman
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm version "${TAG#v}" --no-git-tag-version --allow-same-version
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: release/*.exe
+          if-no-files-found: error
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: "platforms;android-36 build-tools;36.0.0"
+      - run: npm ci
+      - run: npm run android:sync
+      - name: Build signed APK
+        working-directory: android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          LP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          LP_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          LP_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export LP_KEYSTORE_FILE="$RUNNER_TEMP/release.jks"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$LP_KEYSTORE_FILE"
+          ./gradlew assembleRelease --console=plain -PversionCode=${{ github.run_number }} -PversionName="${TAG#v}"
+          rm -f "$LP_KEYSTORE_FILE"
+          mkdir -p ../release
+          mv app/build/outputs/apk/release/app-release.apk "../release/learn-piano-${TAG#v}-android.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: release/*.apk
+          if-no-files-found: error
+
+  publish:
+    needs: [linux, windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${TAG#v}"
+          cat > notes.md <<EOF
+          ## Downloads
+
+          | Plataforma | Arquivo | Como instalar |
+          |---|---|---|
+          | Android | \`learn-piano-$V-android.apk\` | Abra o arquivo no celular e permita instalar de fontes desconhecidas |
+          | Windows | \`learn-piano-$V-windows-setup.exe\` | Execute o instalador (o Windows pode avisar que o app não é assinado: "Mais informações" → "Executar assim mesmo") |
+          | Debian / Ubuntu | \`learn-piano-$V-linux-amd64.deb\` | \`sudo apt install ./learn-piano-$V-linux-amd64.deb\` |
+          | Arch Linux | \`learn-piano-$V-linux-x64.pacman\` | \`sudo pacman -U learn-piano-$V-linux-x64.pacman\` |
+
+          EOF
+          gh release create "$TAG" dist/* \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Learn Piano $TAG" \
+            --notes-file notes.md \
+            --generate-notes
