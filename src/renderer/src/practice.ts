@@ -57,7 +57,8 @@ export class Practice {
     this.osmd = new OpenSheetMusicDisplay(container, {
       backend: "svg",
       autoResize: false,
-      autoBeam: true,
+      // Beams come from the converter (meter-aware groups); OSMD's auto-beaming misses ties, chords and 6/8.
+      autoBeam: false,
       drawTitle: false,
       drawComposer: false,
       drawPartNames: false,

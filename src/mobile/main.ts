@@ -64,7 +64,12 @@ const session = new Session(
       $("meter").classList.toggle("usb", mode === "midi");
       $("meter").classList.toggle("ok", ok);
       if (mode === "midi" && !ok) showBanner(text.replace(/^MIDI: /, "Teclado MIDI: "));
-      else hideBanner();
+      else if (mode === "mic" && ok && !session?.micCalibrated) {
+        showBanner("Microfone não calibrado: o app pode aceitar sons que não são do seu piano.", {
+          label: "Calibrar",
+          run: () => void calibrate(),
+        });
+      } else hideBanner();
     },
     level: (v) => {
       const bars = $("meter").querySelectorAll("i");
@@ -533,7 +538,24 @@ async function chooseInput(mode: InputMode): Promise<void> {
     return;
   }
   snack(mode === "mic" ? "Microfone conectado" : "Entrada MIDI ativa");
+  await offerCalibration();
 }
+
+// The first time the microphone opens without a calibration, run it right away (it can be cancelled);
+// afterwards the practice banner keeps offering it.
+async function offerCalibration(): Promise<void> {
+  if (session.inputMode !== "mic" || session.micCalibrated || remembered("calibrationOffered") === "1") return;
+  remember("calibrationOffered", "1");
+  await calibrate();
+}
+
+async function calibrate(): Promise<void> {
+  togglePanel(false);
+  if (practice.isPlaying) practice.togglePlay();
+  const saved = await session.calibrateMic();
+  snack(saved ? "Microfone calibrado" : "Calibração cancelada");
+}
+$("calibrate").addEventListener("click", () => void calibrate());
 
 $("octave-down").addEventListener("click", () => session.setOctave(session.octave - 1));
 $("octave-up").addEventListener("click", () => session.setOctave(session.octave + 1));
@@ -619,6 +641,7 @@ async function boot(): Promise<void> {
   }
   const error = await session.start(startAndroidMidi);
   if (error) showBanner(error, { label: "Tentar de novo", run: () => void chooseInput("mic") });
+  else await offerCalibration();
   session.sound.ready.catch(() => snack("O som de piano não carregou (sem internet?)."));
 }
 
