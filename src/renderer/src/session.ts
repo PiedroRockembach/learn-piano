@@ -1,6 +1,7 @@
 import { Midi } from "@tonejs/midi";
 import { PianoSound } from "./audio";
 import { VirtualKeyboard } from "./keyboard";
+import { runCalibration } from "./calibration";
 import { MicInput } from "./mic-input";
 import type { MidiHandlers } from "./midi-input";
 import { Practice, type HandMode, type PracticeStats } from "./practice";
@@ -134,9 +135,25 @@ export class Session {
     return this.mode === "mic" && !this.mic.active ? this.setInputMode("mic") : null;
   }
 
+  // Whether the open microphone has a saved calibration (thresholds measured for this device and room).
+  get micCalibrated(): boolean {
+    return this.mic.calibrated;
+  }
+
+  // Runs the calibration overlay on the open microphone; resolves to whether a new one was saved.
+  async calibrateMic(): Promise<boolean> {
+    if (!this.mic.active) return false;
+    if (this.practice.isPlaying) this.practice.togglePlay();
+    const result = await runCalibration(this.mic);
+    if (result) this.mic.reloadCalibration();
+    this.renderInput();
+    return result !== null;
+  }
+
   private renderInput(): void {
     if (this.mode === "mic") {
-      this.view.inputStatus("mic", this.mic.active, this.mic.active ? `Mic: ${this.micLabel}` : "Mic: desligado");
+      const label = this.mic.active ? `Mic: ${this.micLabel}${this.mic.calibrated ? "" : " (não calibrado)"}` : "Mic: desligado";
+      this.view.inputStatus("mic", this.mic.active, label);
     } else if (this.midiError) {
       this.view.inputStatus("midi", false, `MIDI indisponível: ${this.midiError}`);
     } else {

@@ -55,6 +55,7 @@ function renderPlayState(playing: boolean): void {
 function renderInputStatus(mode: InputMode, ok: boolean, text: string): void {
   $<HTMLSelectElement>("input-mode").value = mode;
   $("mic-level").hidden = mode !== "mic";
+  $("calibrate").hidden = mode !== "mic" || !ok;
   const el = $("midi-status");
   el.textContent = text;
   el.classList.toggle("ok", ok);
@@ -62,9 +63,31 @@ function renderInputStatus(mode: InputMode, ok: boolean, text: string): void {
 
 async function setInputMode(mode: InputMode): Promise<void> {
   const error = await session.setInputMode(mode);
-  if (!error) return;
+  if (!error) return offerCalibration();
   setStatus(error, true);
   await session.setInputMode("midi");
+}
+
+// The first time the microphone opens without a calibration, run it right away (it can be cancelled).
+async function offerCalibration(): Promise<void> {
+  if (session.inputMode !== "mic" || session.micCalibrated) return;
+  let offered = false;
+  try {
+    offered = localStorage.getItem("calibrationOffered") === "1";
+    localStorage.setItem("calibrationOffered", "1");
+  } catch {
+    // storage unavailable: offer every time
+  }
+  if (offered) {
+    setStatus("Microfone não calibrado: clique em Calibrar para reconhecer só as notas do seu piano.");
+    return;
+  }
+  await calibrate();
+}
+
+async function calibrate(): Promise<void> {
+  const saved = await session.calibrateMic();
+  setStatus(saved ? "Microfone calibrado." : "Calibração cancelada.");
 }
 
 function renderList(items: (SongRef | LibraryEntry)[]): void {
@@ -338,9 +361,10 @@ window.addEventListener("keydown", (e) => {
 $<HTMLSelectElement>("input-mode").addEventListener("change", (e) => {
   void setInputMode((e.target as HTMLSelectElement).value as InputMode);
 });
+$("calibrate").addEventListener("click", () => void calibrate());
 startComputerKeyboard({ noteOn: (p, v) => session.noteOn(p, v), noteOff: (p) => session.noteOff(p) });
 void session.start(startMidiInput).then(async (error) => {
-  if (!error) return;
+  if (!error) return offerCalibration();
   setStatus(error, true);
   await session.setInputMode("midi");
 });

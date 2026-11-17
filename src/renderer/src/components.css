@@ -213,3 +213,100 @@
   color: var(--muted);
   font-size: 12px;
 }
+
+.calib-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 0.6);
+}
+
+.calib-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 18px 22px;
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+}
+
+.calib-card h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.calib-text {
+  min-height: 2.8em;
+  margin: 0;
+  font-size: 16px;
+}
+
+.calib-meter {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--panel-2);
+}
+
+.calib-meter i {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #3ecf7a;
+  transition: width 60ms;
+}
+
+.calib-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.calib-steps li {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.calib-steps li.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.calib-steps li.ok {
+  background: #1c3a2a;
+  color: #b8f0cd;
+}
+
+.calib-steps li.ok::before {
+  content: "✓ ";
+}
+
+.calib-steps li.skipped {
+  text-decoration: line-through;
+}
+
+.calib-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.calib-actions [hidden] {
+  display: none;
+}

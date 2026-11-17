@@ -762,6 +762,10 @@ body:not(.midi-mode) .midi-only {
   display: none;
 }
 
+body.midi-mode .mic-only {
+  display: none;
+}
+
 .item {
   display: flex;
   align-items: center;

@@ -1,5 +1,5 @@
 import type { Midi } from "@tonejs/midi";
-import { analyzeHarmony, harmonyXml, spell, type HarmonyAnalysis } from "./harmony";
+import { analyzeHarmony, harmonyXml, spell, type ChordEvent, type HarmonyAnalysis } from "./harmony";
 
 export const UNITS_PER_QUARTER = 4;
 const UNITS_PER_WHOLE = UNITS_PER_QUARTER * 4;
@@ -111,11 +111,10 @@ export function midiToScore(midi: Midi, title: string, opts: ConvertOptions): Co
   const measures = buildMeasures(midi, q, Math.max(lastEnd, 1));
   const fifths = detectKey(midi, notes);
   const harmony = analyzeHarmony(notes, measures, fifths);
-  const harmonyAt = new Map(harmony.chords.map((c) => [c.unit, harmonyXml(c, fifths)]));
-  const bpm = Math.round(midi.header.tempos[0]?.bpm ?? 120);
-
   const rhItems = buildItems(notes.filter((n) => n.hand === "rh"));
   const lhItems = buildItems(notes.filter((n) => n.hand === "lh"));
+  const harmonyAt = placeHarmony(harmony.chords, rhItems, measures, fifths);
+  const bpm = Math.round(midi.header.tempos[0]?.bpm ?? 120);
 
   const measureXml = measures.map((m, i) => {
     const parts: string[] = [];
@@ -259,8 +258,38 @@ function buildPositions(notes: QNote[]): Map<number, Position> {
   return positions;
 }
 
-// Chord symbols attach to the note starting at their timestamp (OSMD ignores <offset>),
-// so notes and rests are cut with ties wherever a chord change falls inside them.
+// Beat length in units: a dotted quarter in compound meters (6/8, 9/8, 12/8, and 3/8 as one beat), else the
+// beat-type note. Beams group notes within one beat, as engraved scores do.
+function beatUnits(m: Measure): number {
+  if (m.beatType === 8 && m.beats % 3 === 0) return 6;
+  return UNITS_PER_WHOLE / m.beatType;
+}
+
+// Chord symbols attach to the note starting at their timestamp (OSMD ignores <offset>). Each symbol moves to
+// the next right-hand attack within the same beat; only when there is none is a note cut (tied) to hold it.
+function placeHarmony(chords: ChordEvent[], rh: Item[], measures: Measure[], fifths: number): Map<number, string> {
+  const placed = new Map<number, string>();
+  for (const c of chords) {
+    const m = measures.find((x) => c.unit >= x.start && c.unit < x.start + x.length);
+    const beat = m ? beatUnits(m) : UNITS_PER_QUARTER;
+    const beatEnd = m ? m.start + Math.ceil((c.unit - m.start + 1) / beat) * beat : c.unit + beat;
+    const onset = rh.find((it) => it.pitches && it.start >= c.unit && it.start < beatEnd);
+    const unit = onset?.start ?? c.unit;
+    if (!placed.has(unit)) placed.set(unit, harmonyXml(c, fifths));
+  }
+  return placed;
+}
+
+interface Piece {
+  start: number;
+  dur: number;
+  pitches: number[] | null;
+  tieStart: boolean;
+  tieStop: boolean;
+  harmony?: string;
+  beams?: string[];
+}
+
 function staffXml(items: Item[], m: Measure, staff: 1 | 2, fifths: number, harmonyAt: Map<number, string>): string {
   const mEnd = m.start + m.length;
   const voice = staff === 1 ? 1 : 5;
@@ -271,16 +300,21 @@ function staffXml(items: Item[], m: Measure, staff: 1 | 2, fifths: number, harmo
     return `<note><rest measure="yes"/><duration>${m.length}</duration><voice>${voice}</voice><staff>${staff}</staff></note>`;
   }
 
-  const out: string[] = [];
+  const pieces: Piece[] = [];
   let cursor = m.start;
   const emitPiece = (start: number, end: number, pitches: number[] | null, tieIn: boolean, tieOut: boolean) => {
-    const chord = harmonyAt.get(start);
-    if (chord) out.push(chord);
-    const pieces = splitDuration(start - m.start, end - start);
-    pieces.forEach((dur, k) => {
-      const tStop = tieIn || k > 0;
-      const tStart = tieOut || k < pieces.length - 1;
-      out.push(noteXml(pitches, dur, voice, staff, fifths, tStart, tStop));
+    const durs = splitDuration(start - m.start, end - start, m);
+    let at = start;
+    durs.forEach((dur, k) => {
+      pieces.push({
+        start: at,
+        dur,
+        pitches,
+        tieStop: pitches !== null && (tieIn || k > 0),
+        tieStart: pitches !== null && (tieOut || k < durs.length - 1),
+        harmony: k === 0 ? harmonyAt.get(start) : undefined,
+      });
+      at += dur;
     });
   };
   const emit = (start: number, end: number, pitches: number[] | null, tieIn: boolean, tieOut: boolean) => {
@@ -301,19 +335,52 @@ function staffXml(items: Item[], m: Measure, staff: 1 | 2, fifths: number, harmo
     cursor = e;
   }
   if (cursor < mEnd) emit(cursor, mEnd, null, false, false);
-  return out.join("");
+  addBeams(pieces, m);
+  return pieces
+    .map((pc) => (pc.harmony ?? "") + noteXml(pc.pitches, pc.dur, voice, staff, fifths, pc.tieStart, pc.tieStop, pc.beams))
+    .join("");
+}
+
+// Beams over runs of eighths and shorter notes inside one beat; rests and longer notes break a run.
+// Second-level beams join consecutive 16ths; a lone 16th gets a hook toward its neighbour.
+function addBeams(pieces: Piece[], m: Measure): void {
+  const beat = beatUnits(m);
+  const group = (pc: Piece) => Math.floor((pc.start - m.start) / beat);
+  const beamable = (pc: Piece) => pc.pitches !== null && pc.dur < UNITS_PER_QUARTER;
+  let run: Piece[] = [];
+  const flush = () => {
+    if (run.length >= 2) {
+      run.forEach((pc, i) => {
+        const level1 = i === 0 ? "begin" : i === run.length - 1 ? "end" : "continue";
+        pc.beams = [level1];
+        if (pc.dur !== 1) return;
+        const prev16 = run[i - 1]?.dur === 1;
+        const next16 = run[i + 1]?.dur === 1;
+        if (prev16 && next16) pc.beams.push("continue");
+        else if (next16) pc.beams.push("begin");
+        else if (prev16) pc.beams.push("end");
+        else pc.beams.push(i === 0 ? "forward hook" : "backward hook");
+      });
+    }
+    run = [];
+  };
+  for (const pc of pieces) {
+    if (!beamable(pc) || (run.length && group(run[0]) !== group(pc))) flush();
+    if (beamable(pc)) run.push(pc);
+  }
+  flush();
 }
 
 const NOTE_VALUES = [16, 12, 8, 6, 4, 3, 2, 1];
 const DOTTED = new Set([12, 6, 3]);
 const TYPE_NAMES: Record<number, string> = { 16: "whole", 8: "half", 4: "quarter", 2: "eighth", 1: "16th" };
 
-function splitDuration(posInMeasure: number, dur: number): number[] {
+function splitDuration(posInMeasure: number, dur: number, m: Measure): number[] {
   const pieces: number[] = [];
   let pos = posInMeasure;
   let left = dur;
   while (left > 0) {
-    const v = NOTE_VALUES.find((v) => v <= left && isAligned(pos, v)) ?? 1;
+    const v = NOTE_VALUES.find((v) => v <= left && v <= m.length && isAligned(pos, v, m)) ?? 1;
     pieces.push(v);
     pos += v;
     left -= v;
@@ -321,10 +388,23 @@ function splitDuration(posInMeasure: number, dur: number): number[] {
   return pieces;
 }
 
-function isAligned(pos: number, value: number): boolean {
+// Where a value may start without hiding the beat. Compound meters (dotted-quarter beat) allow a quarter
+// or an eighth anywhere inside a beat and never let a note cross a beat unless it fills whole beats.
+function isAligned(pos: number, value: number, m: Measure): boolean {
   if (value === 16) return pos === 0;
-  const base = DOTTED.has(value) ? (value * 2) / 3 : value;
-  return pos % Math.min(base, UNITS_PER_QUARTER) === 0;
+  if (beatUnits(m) === 6) {
+    const inBeat = pos % 6;
+    if (value >= 6) return inBeat === 0 && value % 6 === 0;
+    return inBeat + value <= 6 && inBeat % (value === 3 ? 3 : Math.min(value, 2)) === 0;
+  }
+  // Simple meters: on-beat values as usual, plus the common syncopations (eighth–quarter–eighth,
+  // eighth + dotted quarter, 16th + dotted eighth) as long as they stay within one half of a 4/4 bar.
+  const inBeat = pos % UNITS_PER_QUARTER;
+  const half = m.length === UNITS_PER_WHOLE ? UNITS_PER_WHOLE / 2 : m.length;
+  const crossesHalf = Math.floor(pos / half) !== Math.floor((pos + value - 1) / half);
+  if (value >= 8) return inBeat === 0;
+  if (value === 4 || value === 6) return inBeat === 0 || (pos % 2 === 0 && !crossesHalf);
+  return inBeat + value <= UNITS_PER_QUARTER;
 }
 
 function noteXml(
@@ -335,6 +415,7 @@ function noteXml(
   fifths: number,
   tieStart: boolean,
   tieStop: boolean,
+  beams: string[] = [],
 ): string {
   const base = DOTTED.has(dur) ? (dur * 2) / 3 : dur;
   const type = `<type>${TYPE_NAMES[base]}</type>${DOTTED.has(dur) ? "<dot/>" : ""}`;
@@ -343,6 +424,7 @@ function noteXml(
   }
   const ties = (tieStop ? `<tie type="stop"/>` : "") + (tieStart ? `<tie type="start"/>` : "");
   const tied = (tieStop ? `<tied type="stop"/>` : "") + (tieStart ? `<tied type="start"/>` : "");
+  const beamXml = beams.map((b, i) => `<beam number="${i + 1}">${b}</beam>`).join("");
   return pitches
     .map((p, i) => {
       const { step, alter, octave } = spell(p, fifths);
@@ -350,6 +432,7 @@ function noteXml(
         `<note>${i > 0 ? "<chord/>" : ""}` +
         `<pitch><step>${step}</step>${alter ? `<alter>${alter}</alter>` : ""}<octave>${octave}</octave></pitch>` +
         `<duration>${dur}</duration>${ties}<voice>${voice}</voice>${type}<staff>${staff}</staff>` +
+        (i === 0 ? beamXml : "") +
         (tied ? `<notations>${tied}</notations>` : "") +
         `</note>`
       );
